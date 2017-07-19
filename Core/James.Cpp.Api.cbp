@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<CodeBlocks_project_file>
+	<FileVersion major="1" minor="6" />
+	<Project>
+		<Option title="James.Cpp.Api" />
+		<Option pch_mode="2" />
+		<Option compiler="gcc" />
+		<Build>
+			<Target title="Debug">
+				<Option output="bin/Debug/James.Cpp.dll" imp_lib="$(TARGET_OUTPUT_DIR)libJames.Cpp.a" def_file="$(TARGET_OUTPUT_DIR)James.Cpp.def" prefix_auto="0" extension_auto="0" />
+				<Option object_output="obj/Debug/" />
+				<Option type="3" />
+				<Option compiler="gcc" />
+				<Option createDefFile="1" />
+				<Option createStaticLib="1" />
+				<Compiler>
+					<Add option="-Wall" />
+					<Add option="-m32" />
+					<Add option="-g" />
+					<Add option="-DBUILD_DLL" />
+				</Compiler>
+				<Linker>
+					<Add option="-m32" />
+					<Add library="user32" />
+				</Linker>
+			</Target>
+			<Target title="Release">
+				<Option output="bin/Release/James" prefix_auto="1" extension_auto="1" />
+				<Option object_output="obj/Release/" />
+				<Option type="3" />
+				<Option compiler="gcc" />
+				<Option createDefFile="1" />
+				<Option createStaticLib="1" />
+				<Compiler>
+					<Add option="-Os" />
+					<Add option="-Wall" />
+					<Add option="-m32" />
+					<Add option="-DBUILD_DLL" />
+				</Compiler>
+				<Linker>
+					<Add option="-s" />
+					<Add option="-m32" />
+					<Add library="user32" />
+				</Linker>
+			</Target>
+		</Build>
+		<Compiler>
+			<Add option="-D__CPP_API_DLL_BUILD__" />
+			<Add option="-DWIN32" />
+		</Compiler>
+		<Unit filename="CAnsiString.cpp" />
+		<Unit filename="CApiError.cpp" />
+		<Unit filename="CBase.cpp" />
+		<Unit filename="CException.cpp" />
+		<Unit filename="CGlobalCallback.cpp" />
+		<Unit filename="CStreamTextWriter.cpp" />
+		<Unit filename="EntryPoint_DLL_SharedLib.cpp" />
+		<Unit filename="ICallback.cpp" />
+		<Unit filename="IStream.cpp" />
+		<Unit filename="James.Cpp.Api.hpp" />
+		<Unit filename="StdAfx.hpp" />
+		<Extensions>
+			<code_completion />
+			<envvars />
+			<debugger />
+			<lib_finder disable_auto="1" />
+		</Extensions>
+	</Project>
+</CodeBlocks_project_file>
