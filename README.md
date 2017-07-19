@@ -1,2 +1,2 @@
-# Cplusplus.API
+# James.Cpp
 My C++ application development kit.
