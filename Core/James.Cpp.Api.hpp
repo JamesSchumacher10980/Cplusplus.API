@@ -1,23 +1,21 @@
 #ifndef JAMES_CPP_API_HPP_INCLUDED
 #define JAMES_CPP_API_HPP_INCLUDED
 
+/////////////////////////////////////////////////
+//// (C) 2017 James Bernard Schumacher III
+/////////////////////////////////////////////////
+
 /*
-
    Copyright (C) 2017 James Bernard Schumacher III
-
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
-
        http://www.apache.org/licenses/LICENSE-2.0
-
    Unless required by applicable law or agreed to in writing, software
    distributed under the License is distributed on an "AS IS" BASIS,
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
-
    limitations under the License.
-
 */
 
 #ifdef CPP_API_OS_WINDOWS
@@ -113,6 +111,11 @@ namespace James
             static void operator delete(void * lpBuffer) throw();
             static void * operator new[](SizeT nSize) throw();
             static void operator delete[](void * lpBuffer) throw();
+
+            inline static void * operator new(SizeT nSize, void * lpAddress) throw()
+            {
+                return lpAddress;
+            }
         };
 
         class CPP_API_CLASS CException : public CBase
@@ -297,10 +300,10 @@ namespace James
             bool m_bDynamic;
         };
 
-        template <typename Type> class TArray
+        template <typename Type> class TArray : public CBase
         {
         public:
-            TArray() throw(CApiError) : m_pArrayData(nullptr), m_nCapacity(0), m_nCount(0), m_nBlockSize(16)
+            TArray() throw(CApiError) : CBase(), m_pArrayData(nullptr), m_nCapacity(0), m_nCount(0), m_nBlockSize(16)
             {
                 // An exception will be thrown here if AllocateBuffer() fails.
                 m_pArrayData = AllocateBuffer(m_nBlockSize);
@@ -308,7 +311,7 @@ namespace James
                 m_nCapacity = m_nBlockSize;
             }
 
-            explicit TArray(const SizeT & nCapacity, const SizeT & nCount, const SizeT & nBlockSize) throw(CApiError) : m_pArrayData(nullptr), m_nCapacity(0),
+            explicit TArray(const SizeT & nCapacity, const SizeT & nCount, const SizeT & nBlockSize) throw(CApiError) : CBase(), m_pArrayData(nullptr), m_nCapacity(0),
                 m_nCount(0), m_nBlockSize(nBlockSize)
             {
                 if (nCapacity != 0)
@@ -328,6 +331,304 @@ namespace James
                 }
             }
 
+            TArray(const Type & obj, SizeT nCount) throw(CApiError) : CBase(), m_pArrayData(nullptr), m_nCapacity(0), m_nCount(0), m_nBlockSize(16)
+            {
+                const SizeT nAlloc = DetermineCapacity(nCount);
+
+                // An exception will be thrown here if AllocateBuffer() fails.
+                m_pArrayData = AllocateBuffer(nAlloc);
+
+                m_nCapacity = nAlloc;
+
+                if (nCount != 0)
+                {
+                    Type * pObject = m_pArrayData;
+
+                    for (SizeT x = 0; x < nCount; ++x)
+                    {
+                        try
+                        {
+                            CopyConstruct(pObject, obj);
+                        }
+                        catch(const CApiError & error)
+                        {
+                            // // need to call destructors >.>
+
+                            for (SizeT y = x; ; --y)
+                            {
+                                m_pArrayData[y].~Type();
+
+                                if (y == 0)
+                                {
+                                    break;
+                                }
+                            }
+
+                            throw;
+                        }
+                    }
+
+                    m_nCount = nCount;
+                }
+            }
+
+            TArray(const Type * pArray, SizeT nStart, SizeT nCount) throw(CApiError) : CBase(), m_pArrayData(nullptr), m_nCapacity(0), m_nCount(0), m_nBlockSize(16)
+            {
+                if (pArray != nullptr)
+                {
+                    const SizeT nAlloc = DetermineCapacity(nCount);
+
+                    // exception thrown on failure
+                    m_pArrayData = AllocateBuffer(nAlloc);
+
+                    // will throw an exception on failure, and do cleanup IF needed
+                    CopyConstructArray(m_pArrayData, 0, pArray, nStart, nCount);
+
+                    m_nCount = nCount;
+                }
+                else
+                {
+                    CApiError nullError("A null pointer was encountered as an argument. Argument \'pArray\' was null.",
+                                        __FILE__, __FUNCTION__, __LINE__, CApiError::ErrorCodes::NullPointer);
+
+                    throw(nullError);
+                }
+            }
+
+            TArray(const Type * pArray, SizeT nCount) throw(CApiError) : TArray(pArray, 0, nCount)
+            {
+                // nothing to do, called other constructor
+            }
+
+            TArray(const TArray<Type> & ar) throw(CApiError) : CBase(ar), m_pArrayData(nullptr), m_nCapacity(0), m_nCount(0), m_nBlockSize(ar.m_nBlockSize)
+            {
+                const SizeT nCount = ar.GetCount();
+
+                const SizeT nAlloc = DetermineCapacity(nCount);
+
+                // exception thrown on failure
+                m_pArrayData = AllocateBuffer(nAlloc);
+
+                if (nCount != 0)
+                {
+                    // exception thrown on failure
+                    CopyConstructArray(m_pArrayData, 0, ar.m_pArrayData, 0, nCount);
+
+                    m_nCount = nCount;
+                }
+            }
+
+            TArray(const TArray<Type> & ar, SizeT nStart, SizeT nCount) throw(CApiError) : CBase(ar), m_pArrayData(nullptr), m_nCapacity(0), m_nCount(0),
+                m_nBlockSize(ar.m_nBlockSize)
+            {
+                const SizeT nCheckLength = ar.GetCount();
+
+                if (nStart < nCheckLength)
+                {
+                    const SizeT nObjectsRemaining = nCount - nStart;
+                    const SizeT nObjectsToCopy = nCount < nObjectsRemaining ? nCount : nObjectsRemaining;
+
+                    const SizeT nAlloc = DetermineCapacity(nObjectsToCopy);
+
+                    m_pArrayData = AllocateBuffer(nAlloc);
+
+                    m_nCapacity = nAlloc;
+
+                    CopyConstructArray(m_pArrayData, 0, ar.m_pArrayData, nStart, nObjectsToCopy);
+
+                    m_nCount = nCount;
+                }
+                else
+                {
+                    CApiError rangeError("Index into array was out of range. Argument \'nStart\' was too high.",
+                                         __FILE__, __FUNCTION__, __LINE__, CApiError::ErrorCodes::IndexOutOfRange);
+
+                    throw(rangeError);
+                }
+            }
+
+            TArray(TArray<Type> && ar) throw(CApiError) : CBase(ar), m_pArrayData(ar.m_pArrayData), m_nCapacity(ar.m_nCapacity),
+                m_nCount(ar.m_nCount), m_nBlockSize(ar.m_nBlockSize)
+            {
+                ar.m_pArrayData = nullptr;
+                ar.m_nCapacity = 0;
+                ar.m_nCount = 0;
+                ar.m_nBlockSize = 16;
+            }
+
+            /////////////////////////////////////////////////
+            //// (C) 2017 James Bernard Schumacher III
+            /////////////////////////////////////////////////
+
+            /*
+               Copyright (C) 2017 James Bernard Schumacher III
+               Licensed under the Apache License, Version 2.0 (the "License");
+               you may not use this file except in compliance with the License.
+               You may obtain a copy of the License at
+                   http://www.apache.org/licenses/LICENSE-2.0
+               Unless required by applicable law or agreed to in writing, software
+               distributed under the License is distributed on an "AS IS" BASIS,
+               WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+               See the License for the specific language governing permissions and
+               limitations under the License.
+            */
+
+            typedef TArray<Type> ArrayType;
+
+            TArray(const TArray<ArrayType> & arArrays) throw(CApiError) : m_pArrayData(nullptr), m_nCapacity(0), m_nCount(0),
+                m_nBlockSize(16)
+            {
+                // Get the amount of sub arrays in this array
+                const SizeT nArrayCount = arArrays.GetCount();
+                // variable to store the total amount of objects
+                SizeT nTotalCount = 0;
+
+                // loop through the array
+                for (SizeT x = 0; x < nArrayCount; ++x)
+                {
+                    // retrieve a constant reference to the sub array (an array of Type objects)
+                    const TArray<Type> & ar = arArrays[x];
+                    // Get that arrays count of objects
+                    const SizeT nCount = ar.GetCount();
+                    // add it to the total count of objects
+                    nTotalCount += nCount;
+                }
+
+                // Determine how much space we need by the total amount of objects
+                const SizeT nAlloc = DetermineCapacity(nTotalCount);
+
+                // try to allocate enough space for the buffer
+                // this will throw an exception on failure.
+                m_pArrayData = AllocateBuffer(nAlloc);
+
+                // Set the capacity member variable
+                m_nCapacity = nAlloc;
+
+                // Loop through the array again, this time we are copying the data into
+                // our buffer
+                for (SizeT x = 0; x < nArrayCount; ++x)
+                {
+                    // Get a constant reference to the array at index x
+                    const TArray<Type> & ar = arArrays[x];
+                    // Get the count of objects in that array
+                    const SizeT nCount = ar.GetCount();
+
+                    // check to see if that array is not empty
+                    if (nCount != 0)
+                    {
+                        try
+                        {
+                            // try to Copy construct that array's objects into our own buffer
+                            CopyConstructArray(m_pArrayData, m_nCount, ar.m_pArrayData, 0, nCount);
+                        }
+                        catch(const CApiError & constructError)
+                        {
+                            // Exception thrown by one of the copy constructors of Type.
+                            // Check to see if we have constructed any objects prior to the last CopyConstruct call
+                            if (m_nCount != 0)
+                            {
+                                // the objects in that sub array that were copy constructed have been destroyed in CopyConstruct(),
+                                // but any of the ones in the sub arrays before have not been
+
+                                for (SizeT i = m_nCount - 1; ; --i)
+                                {
+                                    // Call the destructor for that object
+                                    m_pArrayData[i].~Type();
+
+                                    // If we have reached the beginning of the array
+                                    // break out of this loop
+                                    if (i == 0)
+                                    {
+                                        break;
+                                    }
+                                }
+
+                                // set the count of objects to zero
+                                m_nCount = 0;
+                            }
+
+                            // re-throw the exception
+                            throw;
+                        }
+
+                        // If we get here, all is well
+                        // add the amount of objects constructed in this sub array
+                        // to the count of constructed objects
+                        m_nCount += nCount;
+                    }
+                }
+            }
+
+            typedef TArray<Type> * ArrayTypePtr;
+
+            TArray(const TArray<ArrayTypePtr> & arArrayPointers, bool bThrowIfContainsNull) throw(CApiError) : m_pArrayData(nullptr), m_nCapacity(0), m_nCount(0),
+                m_nBlockSize(16)
+            {
+                const SizeT nArrayCount = arArrayPointers.GetCount();
+                SizeT nTotalCount = 0;
+
+                for (SizeT x = 0; x < nArrayCount; ++x)
+                {
+                    ArrayTypePtr ptr = arArrayPointers[x];
+
+                    if (ptr != nullptr)
+                    {
+                        const SizeT nCount = ptr->GetCount();
+                        nTotalCount += nCount;
+                    }
+                    else if (bThrowIfContainsNull == true)
+                    {
+                        CApiError nullError("A null pointer to an array object was encountered in an array.",
+                                            __FILE__, __FUNCTION__, __LINE__, CApiError::ErrorCodes::NullPointer);
+
+                        throw(nullError);
+                    }
+                }
+
+                const SizeT nAlloc = DetermineCapacity(nTotalCount);
+
+                m_pArrayData = AllocateBuffer(nAlloc);
+
+                for (SizeT x = 0; x < nArrayCount; ++x)
+                {
+                    ArrayTypePtr ptr = arArrayPointers[x];
+
+                    if (ptr != nullptr)
+                    {
+                        const SizeT nCount = ptr->GetCount();
+
+                        if (nCount != 0)
+                        {
+                            try
+                            {
+                                CopyConstructArray(m_pArrayData, m_nCount, ptr->m_pArrayData, 0, nCount);
+                            }
+                            catch(const CApiError & error)
+                            {
+                                if (m_nCount != 0)
+                                {
+                                    for (SizeT i = m_nCount - 1; ; --i)
+                                    {
+                                        m_pArrayData[i].~Type();
+
+                                        if (i == 0)
+                                        {
+                                            break;
+                                        }
+                                    }
+
+                                    m_nCount = 0;
+                                }
+
+                                throw;
+                            }
+                        }
+
+                        m_nCount += nCount;
+                    }
+                }
+            }
+
             virtual ~TArray() throw()
             {
                 if (m_pArrayData != nullptr)
@@ -338,6 +639,455 @@ namespace James
                     }
 
                     FreeBuffer(m_pArrayData);
+                }
+            }
+
+            inline SizeT GetCount() const { return m_nCount; }
+            inline SizeT GetCapacity() const { return m_nCapacity; }
+            inline SizeT GetBlockSize() const { return m_nBlockSize; }
+
+            void Reserve(SizeT nCapacity, bool bKeepData) throw(CApiError)
+            {
+                if (bKeepData == false)
+                {
+                    // time to destroy all those objects!
+
+                    Clear();
+                }
+
+                if (nCapacity > m_nCapacity)
+                {
+                    // exception thrown on failure
+                    Type * pNewBuffer = AllocateBuffer(nCapacity);
+
+                    if (m_pArrayData != nullptr)
+                    {
+                        if (m_nCount != 0)
+                        {
+                            try
+                            {
+                                // This function isn't designed to throw an exception
+                                // but if one of the move constructors for the type does, it's caught here
+                                MoveConstructArray(pNewBuffer, 0, m_pArrayData, 0, m_nCount);
+                            }
+                            catch(const CApiError & error)
+                            {
+                                // free pNewBuffer
+
+                                FreeBuffer(pNewBuffer);
+
+                                // Rethrow the exception
+                                throw;
+                            }
+                        }
+
+                        FreeBuffer(m_pArrayData);
+                    }
+
+                    m_pArrayData = pNewBuffer;
+                    m_nCapacity = nCapacity;
+                }
+            }
+
+            void Resize(SizeT nSize) throw(CApiError)
+            {
+                if (nSize > m_nCapacity)
+                {
+                    const SizeT nCapacity = DetermineCapacity(nSize);
+
+                    // Throw an exception on failure
+                    Reserve(nCapacity, true);
+
+                    const SizeT nDefaultConstructCount = nSize - m_nCount;
+
+                    DefaultConstructArray(m_pArrayData, m_nCount, nDefaultConstructCount);
+
+                    m_nCount = nSize;
+                }
+
+                if (nSize > m_nCount)
+                {
+                    const SizeT nDefaultConstructCount = nSize - m_nCount;
+
+                    // Exception thrown on failure
+                    DefaultConstructArray(m_pArrayData, 0, nDefaultConstructCount);
+
+                    m_nCount = nSize;
+                }
+                else if (nSize < m_nCount)
+                {
+                    const SizeT nDestructCount = m_nCount - nSize;
+                    const SizeT nStartIndex = nSize;
+
+                    DestructArray(m_pArrayData, nStartIndex, nDestructCount);
+
+                    m_nCount = nSize;
+                }
+            }
+
+            void Clear() throw()
+            {
+                if (m_pArrayData != nullptr && m_nCount != 0)
+                {
+                    DestructArray(m_pArrayData, 0, m_nCount);
+                }
+
+                m_nCount = 0;
+            }
+
+            void Add(const Type & obj, SizeT nCount) throw(CApiError)
+            {
+                if (nCount != 0)
+                {
+                    const SizeT nNewCount = m_nCount + nCount;
+
+                    if (nNewCount > m_nCapacity)
+                    {
+                        const SizeT nAlloc = DetermineCapacity(nNewCount);
+
+                        // this will throw an exceptino on failure
+                        Reserve(nAlloc, true);
+                    }
+
+                    for (SizeT x = 0; x < nCount; ++x)
+                    {
+                        CopyConstruct(&m_pArrayData[m_nCount], obj);
+
+                        ++m_nCount;
+                    }
+                }
+            }
+
+            void Add(const Type * pArray, SizeT nStart, SizeT nCount) throw(CApiError)
+            {
+                if (pArray != nullptr)
+                {
+                    if (nCount != 0)
+                    {
+                        const SizeT nNewCount = m_nCount + nCount;
+
+                        if (nNewCount > m_nCapacity)
+                        {
+                            const SizeT nAlloc = DetermineCapacity(nNewCount);
+
+                            // Reserve() will throw an exception on failure
+                            Reserve(nAlloc, true);
+                        }
+
+                        // CopyConstructArray will throw an exception if a constructor does
+                        // but it will do cleanup before doing so
+                        CopyConstructArray(m_pArrayData, m_nCount, pArray, nStart, nCount);
+
+                        m_nCount = nNewCount;
+                    }
+                }
+                else
+                {
+                    CApiError nullError("A null pointer was encountered as an argument. \'pArray\' was null.",
+                                        __FILE__, __FUNCTION__, __LINE__, CApiError::ErrorCodes::NullPointer);
+
+                    throw(nullError);
+                }
+            }
+
+            void Add(const TArray<Type> & ar) throw(CApiError)
+            {
+                const SizeT nAddLength = ar.GetCount();
+
+                if (nAddLength != 0)
+                {
+                    if (this != &ar)
+                    {
+                        const SizeT nNewCount = m_nCount + nAddLength;
+
+                        if (nNewCount > m_nCapacity)
+                        {
+                            const SizeT nAlloc = DetermineCapacity(nNewCount);
+
+                            // this will throw an exceptino on failure
+                            Reserve(nAlloc, true);
+                        }
+
+                        // This will throw an exception on failure
+                        CopyConstructArray(m_pArrayData, m_nCount, ar.m_pArrayData, 0, nAddLength);
+
+                        m_nCount = nNewCount;
+                    }
+                    else
+                    {
+                        const SizeT nOldSize = m_nCount;
+                        const SizeT nNewSize = nOldSize * 2;
+
+                        if (nNewSize > m_nCapacity)
+                        {
+                            const SizeT nAlloc = DetermineCapacity(nNewSize);
+
+                            // throw an exception on failure
+                            Reserve(nAlloc, true);
+                        }
+
+                        // Copy Construct the last part from the source, even though they are the same objecT
+                        // This will throw an exception
+                        CopyConstructArray(m_pArrayData, m_nCount, m_pArrayData, 0, nOldSize);
+
+                        m_nCount = nNewSize;
+                    }
+                }
+            }
+
+            void Add(const TArray<Type> & ar, SizeT nStart, SizeT nCount) throw(CApiError)
+            {
+                const SizeT nCheckCount = ar.GetCount();
+
+                if (nStart < nCheckCount)
+                {
+                    const SizeT nObjectsRemaining = nCheckCount - nStart;
+                    const SizeT nObjectsToCopy = nCount < nObjectsRemaining ? nCount : nObjectsRemaining;
+
+                    const SizeT nNewCount = m_nCount + nObjectsToCopy;
+
+                    if (this != &ar)
+                    {
+                        if (nNewCount > m_nCapacity)
+                        {
+                            const SizeT nAlloc = DetermineCapacity(nNewCount);
+
+                            // Reserve throws exception on failure
+                            Reserve(nAlloc, true);
+                        }
+
+                        // CopyConstructArray throws exception on failure, but does cleanup
+                        CopyConstructArray(m_pArrayData, m_nCount, ar.m_pArrayData, nStart, nObjectsToCopy);
+
+                        m_nCount = nNewCount;
+                    }
+                    else
+                    {
+                        SizeT nNewCapacity = 0;
+                        Type * pBuffer = nullptr;
+
+                        if (nNewCount > m_nCapacity)
+                        {
+                            const SizeT nAlloc = DetermineCapacity(nNewCount);
+
+                            // AllocateBuffer throws an exception on failure
+                            pBuffer = AllocateBuffer(nAlloc);
+
+                            nNewCapacity = nAlloc;
+                        }
+                        else
+                        {
+                            // AllocateBuffer throws an exception on failure
+                            pBuffer = AllocateBuffer(m_nCapacity);
+
+                            nNewCapacity = m_nCapacity;
+                        }
+
+                        // Move the left m_nCount objects from the array
+                        // just remember we have to COPY from the pBuffer when we do this,
+                        // because the m_pArrayData variable is no longer valid!
+
+                        MoveConstructArray(pBuffer, 0, m_pArrayData, 0, m_nCount);
+
+                        // A question here is whether or not to call the destructors on the old array data,
+                        //  because as I intended the move constructor will never leave an object in need of a destructor
+                        // although by definition it is supposed to be a valid state >.>
+                        // If you want to specialize this class, use this line below
+
+                        // DestructArray(m_pArrayData, 0, m_nCount);
+
+                        FreeBuffer(m_pArrayData);
+
+                        m_pArrayData = pBuffer; // See? We are setting m_pArrayData with pBuffer
+                        m_nCapacity = nNewCapacity;
+
+                        // Copy Construct the remaining objects
+
+                        // This will throw an exception on failure
+                        CopyConstructArray(m_pArrayData, m_nCount, m_pArrayData, nStart, nObjectsToCopy);
+
+                        m_nCount = nNewCount;
+                    }
+                }
+                else if (nStart > 0) // if nStart > 0 && !< nStart
+                {
+                    CApiError rangeError("Index into an array was out of range. Argument \'nStart\' was too high.",
+                                         __FILE__, __FUNCTION__, __LINE__, CApiError::ErrorCodes::IndexOutOfRange);
+
+                    throw(rangeError);
+                }
+                /*else
+                {
+                    // do nothing, this means nStart == nCheckCount and nStart == 0
+                }*/
+            }
+
+            TArray<Type> & operator= (const TArray<Type> & ar) throw(CApiError)
+            {
+                if (this != &ar)
+                {
+                    const SizeT nCount = ar.GetCount();
+
+                    if (nCount == 0)
+                    {
+                        Clear();
+                    }
+                    else if (nCount > m_nCapacity)
+                    {
+                        const SizeT nAlloc = DetermineCapacity(nCount);
+
+                        Type * pBuffer = AllocateBuffer(nAlloc);
+
+                        try
+                        {
+                            CopyConstructArray(pBuffer, 0, ar.m_pArrayData, 0, nCount);
+                        }
+                        catch(const CApiError & error)
+                        {
+                            FreeBuffer(pBuffer);
+
+                            throw;
+                        }
+
+                        if (m_pArrayData != nullptr && m_nCount != 0)
+                        {
+                            DestructArray(m_pArrayData, 0, m_nCount);
+
+                            FreeBuffer(m_pArrayData);
+                        }
+
+                        m_pArrayData = pBuffer;
+                        m_nCapacity = nAlloc;
+                        m_nCount = nCount;
+                    }
+                    else if (nCount > m_nCount)
+                    {
+                        const SizeT nAssignCount = m_nCount;
+                        const SizeT nCopyConstructCount = nCount - nAssignCount;
+
+                        if (nAssignCount != 0)
+                        {
+                            AssignOperatorArray(m_pArrayData, 0, ar.m_pArrayData, 0, nAssignCount);
+                        }
+
+                        // Exception thrown here on failure!
+                        CopyConstructArray(m_pArrayData, m_nCount, ar.m_pArrayData, m_nCount, nCopyConstructCount);
+
+                        m_nCount = nCount;
+                    }
+                    else if (nCount < m_nCount)
+                    {
+                        const SizeT nDestructCount = m_nCount - nCount;
+                        const SizeT nStartIndex = nCount;
+
+                        DestructArray(m_pArrayData, nStartIndex, nDestructCount);
+
+                        m_nCount = nCount;
+
+                        AssignOperatorArray(m_pArrayData, 0, ar.m_pArrayData, 0, nCount);
+                    }
+                    else
+                    {
+                        AssignOperatorArray(m_pArrayData, 0, ar.m_pArrayData, 0, nCount);
+                    }
+                }
+
+                return *this;
+            }
+
+            TArray<Type> & operator+= (const Type & obj) throw(CApiError)
+            {
+                const SizeT nNewLength = m_nCount + 1;
+
+                if (nNewLength > m_nCapacity)
+                {
+                    const SizeT nAlloc = DetermineCapacity(nNewLength);
+
+                    // This will throw an exception on failure
+                    Reserve(nAlloc, true);
+                }
+
+                CopyConstruct(&m_pArrayData[m_nCount], obj);
+
+                m_nCount = nNewLength;
+
+                return *this;
+            }
+
+            TArray<Type> & operator+= (const TArray<Type> & ar) throw(CApiError)
+            {
+                const SizeT nAddLength = ar.GetCount();
+
+                if (nAddLength != 0)
+                {
+                    if (this != &ar)
+                    {
+                        const SizeT nNewCount = m_nCount + nAddLength;
+
+                        if (nNewCount > m_nCapacity)
+                        {
+                            const SizeT nAlloc = DetermineCapacity(nNewCount);
+
+                            // this will throw an exceptino on failure
+                            Reserve(nAlloc, true);
+                        }
+
+                        // This will throw an exception on failure
+                        CopyConstructArray(m_pArrayData, m_nCount, ar.m_pArrayData, 0, nAddLength);
+
+                        m_nCount = nNewCount;
+                    }
+                    else
+                    {
+                        const SizeT nOldSize = m_nCount;
+                        const SizeT nNewSize = nOldSize * 2;
+
+                        if (nNewSize > m_nCapacity)
+                        {
+                            const SizeT nAlloc = DetermineCapacity(nNewSize);
+
+                            // throw an exception on failure
+                            Reserve(nAlloc, true);
+                        }
+
+                        // Copy Construct the last part from the source, even though they are the same objecT
+                        // This will throw an exception
+                        CopyConstructArray(m_pArrayData, m_nCount, ar.m_pArrayData, 0, nOldSize);
+
+                        m_nCount = nNewSize;
+                    }
+                }
+
+                return *this;
+            }
+
+            inline const Type & operator[] (SizeT nIndex) const throw(CApiError)
+            {
+                if (nIndex < m_nCount)
+                {
+                    return m_pArrayData[nIndex];
+                }
+                else
+                {
+                    CApiError rangeError("Index into array was out of range. Argument \'nIndex\' was too high.",
+                                         __FILE__, __FUNCTION__, __LINE__, CApiError::ErrorCodes::IndexOutOfRange);
+
+                    throw(rangeError);
+                }
+            }
+
+            inline Type & operator[] (SizeT nIndex) throw(CApiError)
+            {
+                if (nIndex < m_nCount)
+                {
+                    return m_pArrayData[nIndex];
+                }
+                else
+                {
+                    CApiError rangeError("Index into array was out of range. Argument \'nIndex\' was too high.",
+                                         __FILE__, __FUNCTION__, __LINE__, CApiError::ErrorCodes::IndexOutOfRange);
+
+                    throw(rangeError);
                 }
             }
         protected:
@@ -386,17 +1136,17 @@ namespace James
                 FreeMemory(pBuffer);
             }
 
-            static void DefaultConstruct(Type * pObject) throw(CApiError)
+            static inline void DefaultConstruct(Type * pObject) throw(CApiError)
             {
                 new (pObject) Type();
             }
 
-            static void CopyConstruct(Type * pObject, const Type & obj) throw(CApiError)
+            static inline void CopyConstruct(Type * pObject, const Type & obj) throw(CApiError)
             {
                 new (pObject) Type(obj);
             }
 
-            static void MoveConstruct(Type * pObject, Type && obj) throw()
+            static inline void MoveConstruct(Type * pObject, Type && obj) throw()
             {
                 new (pObject) Type(static_cast<Type &&>(obj));
             }
@@ -465,10 +1215,10 @@ namespace James
                 }
             }
 
-            static void MoveConstructArray(Type * pBuffer, SizeT nDestStart, const Type * pSource, SizeT nSourceStart, SizeT nCount) throw()
+            static void MoveConstructArray(Type * pBuffer, SizeT nDestStart, Type * pSource, SizeT nSourceStart, SizeT nCount) throw()
             {
                 Type * pObject = &pBuffer[nDestStart];
-                const Type * pSourceObject = &pSource[nSourceStart];
+                Type * pSourceObject = &pSource[nSourceStart];
 
                 for (SizeT x = 0; x < nCount; ++x)
                 {
@@ -476,6 +1226,22 @@ namespace James
 
                     ++pObject;
                     ++pSourceObject;
+                }
+            }
+
+            static void AssignOperatorArray(Type * pBuffer, SizeT nStart, const Type * pSource, SizeT nSourceStart, SizeT nCount) throw(CApiError)
+            {
+                Type * pDest = &pBuffer[nStart];
+                const Type * pSourceObject = &pSource[nSourceStart];
+
+                for (SizeT x = 0; x < nCount; ++x)
+                {
+                    // If your assignment operator throws an exception,
+                    // make sure it is derived from CApiError
+                    *pDest = *pSourceObject;
+
+                    ++pDest;
+                    ++pSource;
                 }
             }
 
